@@ -2,8 +2,9 @@ import os
 import random
 import pickle
 import numpy as np
-import torch 
+import torch
 import scipy.io
+
 
 def _fetch(path, name):
     if name == 'train':

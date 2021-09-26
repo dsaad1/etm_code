@@ -13,12 +13,15 @@ import sys
 import matplotlib.pyplot as plt 
 import data
 import scipy.io
+import wandb
+
 
 from torch import nn, optim
 from torch.nn import functional as F
 
 from etm import ETM
 from utils import nearest_neighbors, get_topic_coherence, get_topic_diversity
+import model as my_models
 
 parser = argparse.ArgumentParser(description='The Embedded Topic Model')
 
@@ -60,9 +63,12 @@ parser.add_argument('--load_from', type=str, default='', help='the name of the c
 parser.add_argument('--tc', type=int, default=0, help='whether to compute topic coherence or not')
 parser.add_argument('--td', type=int, default=0, help='whether to compute topic diversity or not')
 
+###
+parser.add_argument('--queries', type=str, nargs="+", required=True)
 args = parser.parse_args()
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+#device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device(3)
 
 print('\n')
 np.random.seed(args.seed)
@@ -70,6 +76,9 @@ torch.manual_seed(args.seed)
 if torch.cuda.is_available():
     torch.cuda.manual_seed(args.seed)
 
+run = wandb.init(project='qualitative-analysis', entity='witw')
+wandb.run.name = "ETM-post-triplet-2" 
+    
 ## get data
 # 1. vocabulary
 vocab, train, valid, test = data.get_data(os.path.join(args.data_path))
@@ -140,6 +149,22 @@ else:
 model = ETM(args.num_topics, vocab_size, args.t_hidden_size, args.rho_size, args.emb_size, 
                 args.theta_act, embeddings, args.train_embeddings, args.enc_drop).to(device)
 
+
+checkpoint = '1actual50 epoch=23.ckpt'
+triplet_model = my_models.TripletNet.load_from_checkpoint(checkpoint)
+
+model.load_state_dict(triplet_model.etm.state_dict())
+
+# Freeze all parameters of the model, then unfreeze alpha and logvariance
+# for param in model.rho.parameters():
+#     param.requires_grad = False
+    
+for param in model.q_theta.parameters():
+    param.requires_grad = False
+
+for param in model.mu_q_theta.parameters():
+    param.requires_grad = False
+
 print('model: {}'.format(model))
 
 if args.optimizer == 'adam':
@@ -198,6 +223,10 @@ def train(epoch):
     print('*'*100)
     print('Epoch----->{} .. LR: {} .. KL_theta: {} .. Rec_loss: {} .. NELBO: {}'.format(
             epoch, optimizer.param_groups[0]['lr'], cur_kl_theta, cur_loss, cur_real_loss))
+    wandb.log({'Epoch': epoch,
+               'KL Theta': cur_kl_theta,
+               'Reconstruction Loss': cur_loss})
+    
     print('*'*100)
 
 def visualize(m, show_emb=True):
@@ -206,8 +235,7 @@ def visualize(m, show_emb=True):
 
     m.eval()
 
-    queries = ['andrew', 'computer', 'sports', 'religion', 'man', 'love', 
-                'intelligence', 'money', 'politics', 'health', 'people', 'family']
+    queries = args.queries
 
     ## visualize topics using monte carlo
     with torch.no_grad():
@@ -371,10 +399,10 @@ else:
                 rho_etm = model.rho.weight.cpu()
             except:
                 rho_etm = model.rho.cpu()
-            queries = ['andrew', 'woman', 'computer', 'sports', 'religion', 'man', 'love', 
-                            'intelligence', 'money', 'politics', 'health', 'people', 'family']
+            queries = args.queries
             print('\n')
             print('ETM embeddings...')
             for word in queries:
                 print('word: {} .. etm neighbors: {}'.format(word, nearest_neighbors(word, rho_etm, vocab)))
             print('\n')
+
